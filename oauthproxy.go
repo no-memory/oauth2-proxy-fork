@@ -1258,7 +1258,7 @@ func checkAllowedCasbinPolicies(req *http.Request, s *sessionsapi.SessionState) 
 		return false
 	}
 
-	enforcer, err := casbin.NewEnforcer("./casbin/basic_model.conf", "./casbin/basic_policy.csv")
+	enforcer, err := casbin.NewEnforcer("./casbin/casbin_model.conf", "./casbin/casbin_policy.csv")
 	if err != nil {
 		logger.Fatalf("ERROR: Failed to create casbin enforcer: %v", err)
 		return false
