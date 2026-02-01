@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/casbin/casbin/v3"
 	"github.com/gorilla/mux"
 	"github.com/justinas/alice"
 	ipapi "github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/ip"
@@ -1158,6 +1159,7 @@ func authOnlyAuthorize(req *http.Request, s *sessionsapi.SessionState) bool {
 		checkAllowedGroups,
 		checkAllowedEmailDomains,
 		checkAllowedEmails,
+		checkAllowedCasbinPolicies,
 	}
 
 	for _, constraint := range constraints {
@@ -1246,6 +1248,30 @@ func checkAllowedEmails(req *http.Request, s *sessionsapi.SessionState) bool {
 	}
 
 	return allowed
+}
+
+func checkAllowedCasbinPolicies(req *http.Request, s *sessionsapi.SessionState) bool {
+	user := req.Header.Get("X-Forwarded-User")
+	uri := req.Header.Get("X-Forwarded-Uri")
+	method := req.Header.Get("X-Forwarded-Method")
+	if user == "" || uri == "" || method == "" {
+		return false
+	}
+
+	enforcer, err := casbin.NewEnforcer("./casbin/basic_model.conf", "./casbin/basic_policy.csv")
+	if err != nil {
+		logger.Fatalf("ERROR: Failed to create casbin enforcer: %v", err)
+		return false
+	}
+
+	res, err := enforcer.Enforce(user, uri, method)
+	if err != nil {
+		logger.Fatalf("ERROR: Failed to enforce casbin policy: %v", err)
+		return false
+	}
+
+	return res
+
 }
 
 // encodeState builds the OAuth state param out of our nonce and
