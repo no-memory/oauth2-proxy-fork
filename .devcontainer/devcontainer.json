@@ -6,12 +6,12 @@
   "containerEnv": { "DEVCONTAINER": "1" },
   "appPort": ["4180:4180"],
   "runArgs": ["-e", "GIT_EDITOR=code --wait"],
+  "containerUser": "vscode",
   "customizations": {
     "vscode": {
       "extensions": [
         "golang.go",
         "ms-vscode.makefile-tools",
-        "visualstudioexptteam.vscodeintellicode",
         "redhat.vscode-yaml",
         "esbenp.prettier-vscode",
         "GitHub.vscode-pull-request-github"
@@ -33,13 +33,11 @@
     }
   },
   "features": {
-    "ghcr.io/devcontainers/features/docker-in-docker": {},
     "ghcr.io/devcontainers/features/common-utils": {
       "configureZshAsDefaultShell": true,
       "username": "vscode",
       "userUid": 1000,
       "userGid": 1000
-    },
-    "ghcr.io/devcontainers/features/kubectl-helm-minikube": {}
+    }
   }
 }
