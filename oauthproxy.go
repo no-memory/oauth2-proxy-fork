@@ -349,6 +349,11 @@ func (p *OAuthProxy) buildProxySubrouter(s *mux.Router) {
 	// The userinfo and logout endpoints needs to load sessions before handling the request
 	s.Path(userInfoPath).Handler(p.sessionChain.ThenFunc(p.UserInfo))
 	s.Path(signOutPath).Handler(p.sessionChain.ThenFunc(p.SignOut))
+
+	// Access management endpoints for Casbin model and policy
+	s.Path("/access_management").Handler(p.sessionChain.ThenFunc(p.AccessManagement))
+	s.Path("/access_management/model").Methods("GET", "POST").Handler(p.sessionChain.ThenFunc(p.AccessManagementModel))
+	s.Path("/access_management/policy").Methods("GET", "POST").Handler(p.sessionChain.ThenFunc(p.AccessManagementPolicy))
 }
 
 // buildPreAuthChain constructs a chain that should process every request before
@@ -1250,7 +1255,7 @@ func checkAllowedEmails(req *http.Request, s *sessionsapi.SessionState) bool {
 	return allowed
 }
 
-func checkAllowedCasbinPolicies(req *http.Request, s *sessionsapi.SessionState) bool {
+func checkAllowedCasbinPolicies(req *http.Request, _ *sessionsapi.SessionState) bool {
 	user := req.Header.Get("X-Forwarded-User")
 	uri := req.Header.Get("X-Forwarded-Uri")
 	method := req.Header.Get("X-Forwarded-Method")
@@ -1363,4 +1368,391 @@ func LoggingCSRFCookiesInOAuthCallback(req *http.Request, cookieName string) {
 	}
 
 	logger.Println(req, logger.AuthFailure, "Cookies were found in OAuth callback, but none was a CSRF cookie.")
+}
+
+// AccessManagement serves the UI page for managing Casbin model and policy
+func (p *OAuthProxy) AccessManagement(rw http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		http.Error(rw, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	html := `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Access Management - Casbin Configuration</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .header {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            color: #333;
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+        .header p {
+            color: #666;
+            font-size: 16px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+        }
+        .panel {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            padding: 30px;
+        }
+        .panel h2 {
+            color: #333;
+            font-size: 24px;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 3px solid #667eea;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            color: #555;
+            font-weight: 600;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+        textarea {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            resize: vertical;
+            transition: border-color 0.3s;
+        }
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 4px 6px rgba(102, 126, 234, 0.4);
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(102, 126, 234, 0.5);
+        }
+        .btn:active {
+            transform: translateY(0);
+        }
+        .message {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+            font-size: 14px;
+        }
+        .message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .info-box {
+            background: #e7f3ff;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+        .info-box p {
+            color: #0c5460;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        @media (max-width: 968px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔐 Access Management</h1>
+            <p>Configure Casbin model and policy files for fine-grained access control</p>
+        </div>
+
+        <div class="grid">
+            <!-- Casbin Model Panel -->
+            <div class="panel">
+                <h2>Casbin Model Configuration</h2>
+                <div class="info-box">
+                    <p>The model defines the access control policy format. It includes request definition, policy definition, matchers, and effects.</p>
+                </div>
+                <div id="model-message" class="message"></div>
+                <form id="model-form">
+                    <div class="form-group">
+                        <label for="model-content">Model Content (casbin_model.conf):</label>
+                        <textarea id="model-content" name="content" rows="20" placeholder="Loading..."></textarea>
+                    </div>
+                    <button type="submit" class="btn">💾 Save Model</button>
+                </form>
+            </div>
+
+            <!-- Casbin Policy Panel -->
+            <div class="panel">
+                <h2>Casbin Policy Configuration</h2>
+                <div class="info-box">
+                    <p>The policy defines the actual access rules. Each line represents a policy rule in CSV format (p, subject, object, action).</p>
+                </div>
+                <div id="policy-message" class="message"></div>
+                <form id="policy-form">
+                    <div class="form-group">
+                        <label for="policy-content">Policy Content (casbin_policy.csv):</label>
+                        <textarea id="policy-content" name="content" rows="20" placeholder="Loading..."></textarea>
+                    </div>
+                    <button type="submit" class="btn">💾 Save Policy</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Load model content
+        async function loadModel() {
+            try {
+                const response = await fetch(window.location.pathname + '/model');
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('model-content').value = data.content;
+                } else {
+                    showMessage('model', 'Failed to load model', 'error');
+                }
+            } catch (error) {
+                showMessage('model', 'Error loading model: ' + error.message, 'error');
+            }
+        }
+
+        // Load policy content
+        async function loadPolicy() {
+            try {
+                const response = await fetch(window.location.pathname + '/policy');
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('policy-content').value = data.content;
+                } else {
+                    showMessage('policy', 'Failed to load policy', 'error');
+                }
+            } catch (error) {
+                showMessage('policy', 'Error loading policy: ' + error.message, 'error');
+            }
+        }
+
+        // Save model
+        document.getElementById('model-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const content = document.getElementById('model-content').value;
+            try {
+                const response = await fetch(window.location.pathname + '/model', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ content: content })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    showMessage('model', data.message || 'Model saved successfully!', 'success');
+                } else {
+                    showMessage('model', data.error || 'Failed to save model', 'error');
+                }
+            } catch (error) {
+                showMessage('model', 'Error saving model: ' + error.message, 'error');
+            }
+        });
+
+        // Save policy
+        document.getElementById('policy-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const content = document.getElementById('policy-content').value;
+            try {
+                const response = await fetch(window.location.pathname + '/policy', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ content: content })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    showMessage('policy', data.message || 'Policy saved successfully!', 'success');
+                } else {
+                    showMessage('policy', data.error || 'Failed to save policy', 'error');
+                }
+            } catch (error) {
+                showMessage('policy', 'Error saving policy: ' + error.message, 'error');
+            }
+        });
+
+        // Show message helper
+        function showMessage(type, message, className) {
+            const messageEl = document.getElementById(type + '-message');
+            messageEl.textContent = message;
+            messageEl.className = 'message ' + className;
+            messageEl.style.display = 'block';
+            setTimeout(() => {
+                messageEl.style.display = 'none';
+            }, 5000);
+        }
+
+        // Load content on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            loadModel();
+            loadPolicy();
+        });
+    </script>
+</body>
+</html>`
+
+	rw.Header().Set("Content-Type", "text/html; charset=utf-8")
+	rw.WriteHeader(http.StatusOK)
+	rw.Write([]byte(html))
+}
+
+// AccessManagementModel handles GET and POST requests for the Casbin model file
+func (p *OAuthProxy) AccessManagementModel(rw http.ResponseWriter, req *http.Request) {
+	modelPath := "./casbin/casbin_model.conf"
+
+	if req.Method == http.MethodGet {
+		// Read the model file
+		content, err := os.ReadFile(modelPath)
+		if err != nil {
+			http.Error(rw, fmt.Sprintf(`{"error": "Failed to read model file: %v"}`, err), http.StatusInternalServerError)
+			return
+		}
+
+		rw.Header().Set("Content-Type", applicationJSON)
+		json.NewEncoder(rw).Encode(map[string]string{
+			"content": string(content),
+		})
+		return
+	}
+
+	if req.Method == http.MethodPost {
+		// Parse the request body
+		var data map[string]string
+		if err := json.NewDecoder(req.Body).Decode(&data); err != nil {
+			http.Error(rw, fmt.Sprintf(`{"error": "Invalid request body: %v"}`, err), http.StatusBadRequest)
+			return
+		}
+
+		content, ok := data["content"]
+		if !ok {
+			http.Error(rw, `{"error": "Missing content field"}`, http.StatusBadRequest)
+			return
+		}
+
+		// Write the model file
+		if err := os.WriteFile(modelPath, []byte(content), 0600); err != nil {
+			http.Error(rw, fmt.Sprintf(`{"error": "Failed to write model file: %v"}`, err), http.StatusInternalServerError)
+			return
+		}
+
+		rw.Header().Set("Content-Type", applicationJSON)
+		rw.WriteHeader(http.StatusOK)
+		json.NewEncoder(rw).Encode(map[string]string{
+			"message": "Model saved successfully",
+		})
+		return
+	}
+
+	http.Error(rw, "Method not allowed", http.StatusMethodNotAllowed)
+}
+
+// AccessManagementPolicy handles GET and POST requests for the Casbin policy file
+func (p *OAuthProxy) AccessManagementPolicy(rw http.ResponseWriter, req *http.Request) {
+	policyPath := "./casbin/casbin_policy.csv"
+
+	if req.Method == http.MethodGet {
+		// Read the policy file
+		content, err := os.ReadFile(policyPath)
+		if err != nil {
+			http.Error(rw, fmt.Sprintf(`{"error": "Failed to read policy file: %v"}`, err), http.StatusInternalServerError)
+			return
+		}
+
+		rw.Header().Set("Content-Type", applicationJSON)
+		json.NewEncoder(rw).Encode(map[string]string{
+			"content": string(content),
+		})
+		return
+	}
+
+	if req.Method == http.MethodPost {
+		// Parse the request body
+		var data map[string]string
+		if err := json.NewDecoder(req.Body).Decode(&data); err != nil {
+			http.Error(rw, fmt.Sprintf(`{"error": "Invalid request body: %v"}`, err), http.StatusBadRequest)
+			return
+		}
+
+		content, ok := data["content"]
+		if !ok {
+			http.Error(rw, `{"error": "Missing content field"}`, http.StatusBadRequest)
+			return
+		}
+
+		// Write the policy file
+		if err := os.WriteFile(policyPath, []byte(content), 0600); err != nil {
+			http.Error(rw, fmt.Sprintf(`{"error": "Failed to write policy file: %v"}`, err), http.StatusInternalServerError)
+			return
+		}
+
+		rw.Header().Set("Content-Type", applicationJSON)
+		rw.WriteHeader(http.StatusOK)
+		json.NewEncoder(rw).Encode(map[string]string{
+			"message": "Policy saved successfully",
+		})
+		return
+	}
+
+	http.Error(rw, "Method not allowed", http.StatusMethodNotAllowed)
 }
