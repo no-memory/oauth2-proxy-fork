@@ -31,6 +31,16 @@
                 "--config", "contrib/local-environment/oauth2-proxy-alpha-config.cfg",
                 "--alpha-config", "contrib/local-environment/oauth2-proxy-alpha-config.yaml"
             ]
+        },
+        {
+            "name": "OAuth2 Proxy Debug precompiled binary",
+            "type": "go",
+            "request": "launch",
+            "mode": "exec",
+            "program": "${workspaceFolder}/oauth2-proxy-debug",
+            "args": [
+                "--config", "contrib/local-environment/oauth2-proxy-github.cfg"
+            ]
         }
     ]
 }

@@ -51,7 +51,8 @@ RUN case ${TARGETPLATFORM} in \
          "linux/arm/v7") GOARCH=arm GOARM=7 ;; \
     esac && \
     printf "Building OAuth2 Proxy for arch ${GOARCH}\n" && \
-    GOARCH=${GOARCH} VERSION=${VERSION} make build && touch jwt_signing_key.pem
+    GOARCH=${GOARCH} VERSION=${VERSION} make build && touch jwt_signing_key.pem && \
+    go build -gcflags=all="-N -l" -o oauth2-proxy-debug
 
 # Reload runtime image
 ARG RUNTIME_IMAGE
@@ -62,6 +63,7 @@ ARG VERSION
 
 COPY --from=builder /go/src/github.com/oauth2-proxy/oauth2-proxy/oauth2-proxy /bin/oauth2-proxy
 COPY --from=builder /go/src/github.com/oauth2-proxy/oauth2-proxy/jwt_signing_key.pem /etc/ssl/private/jwt_signing_key.pem
+COPY --from=builder /go/src/github.com/oauth2-proxy/oauth2-proxy/oauth2-proxy-debug /bin/oauth2-proxy-debug
 
 LABEL org.opencontainers.image.licenses=MIT \
       org.opencontainers.image.description="A reverse proxy that provides authentication with Google, Azure, OpenID Connect and many more identity providers." \
