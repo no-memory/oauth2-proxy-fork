@@ -1255,8 +1255,8 @@ func checkAllowedEmails(req *http.Request, s *sessionsapi.SessionState) bool {
 	return allowed
 }
 
-func checkAllowedCasbinPolicies(req *http.Request, _ *sessionsapi.SessionState) bool {
-	user := req.Header.Get("X-Forwarded-User")
+func checkAllowedCasbinPolicies(req *http.Request, s *sessionsapi.SessionState) bool {
+	user := s.User
 	uri := req.Header.Get("X-Forwarded-Uri")
 	method := req.Header.Get("X-Forwarded-Method")
 	if user == "" || uri == "" || method == "" {
